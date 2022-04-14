@@ -104,7 +104,11 @@ class TextGeneration(Model):
         # set tokenizer padding to prepare inputs for batch inferencing
         # padding_side="left" for only decoder models text generation eg. GPT2
         self.tokenizer.padding_side = padding_side
-        inputs = self.tokenizer(X.tolist(), return_tensors=self.model_type, padding=True)
+        """
+        Here I modify the code in order to have max length padding on encoder inputs.
+        """
+#         inputs = self.tokenizer(X.tolist(), return_tensors=self.model_type, padding=True)
+        inputs = self.tokenizer(X.tolist(), return_tensors=self.model_type, padding="max_length")
         # set tokenizer padding to default
         self.tokenizer.padding_side = 'right'
         return inputs
