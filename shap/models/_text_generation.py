@@ -158,7 +158,61 @@ class TextGeneration(Model):
                     inputs = self.get_inputs(X, padding_side="left")
                 if self.device is not None:
                     inputs = inputs.to(self.device)
-                outputs = self.inner_model.generate(**inputs, **text_generation_params).detach().cpu().numpy()
+                
+                """
+                Here I define the temporary inference script for the current model (inner_model) to match the expectations.
+                """
+                def _model_inference(inputs):
+                    # temporary variable for storing next tokens predicted by the model which is <start> token at the beginning
+                    next_token = 0
+
+                    # list of tokens as an input to the model
+                    start_tokens_list = [0]
+
+                    # we take the result from tokenizer and extract `input_ids` from it (which is just a sequence of integers representing token ids)
+                    smile_input_ids = inputs['input_ids']
+
+                    # we also take the attention mask which actually masks the input sequence length (required for padded sequences)
+                    smile_attention_mask = inputs['attention_mask']
+
+                    # iterate untill some special symbols are generated or max sequence length is achieved
+                    while (
+                            next_token != self.inner_model.config.eos_token_id and
+                            next_token != self.inner_model.config.pad_token_id and
+                            len(start_tokens_list) <= self.tokenizer.model_max_length
+                    ):
+                        # start tokens are the tokens that will be given as an input at current step to the BERT decoder
+                        start_tokens = torch.tensor(start_tokens_list, device=self.device).expand((1, -1))
+
+                        # cut-off gradient calculations and run model inference to get logits for the next token
+                        with torch.no_grad():
+                            # model will return logits for each decoder output position
+                            output_logits = self.inner_model(
+                                input_ids=smile_input_ids,
+                                decoder_input_ids=start_tokens,
+                                encoder_attention_mask=smile_attention_mask
+                            ).logits
+
+                        # here we apply softmax on these logits and we get probability distribution over tokens ids for each decoder output position
+                        tokenized_sentence_prediction_array = torch.softmax(output_logits, dim=-1)
+
+                        # now we choose the tokens with highest probabilities
+                        prediction = torch.argmax(tokenized_sentence_prediction_array, dim=2)
+
+                        # we just take out an integer value from the last position of decoder outputs
+                        #   because the previous positions were already considered and are in `start_tokens_list`
+                        next_token = int(prediction[0][-1].cpu().detach().numpy())
+
+                        # we append this last predicted token into start tokens list and prepare the input for BERT decoder for the next iteration
+                        start_tokens_list.append(next_token)
+
+                    result = np.array(start_tokens_list).reshape(1, -1)
+
+                    return result
+                
+                outputs = _model_inference(inputs)
+                # outputs = self.inner_model.generate(**inputs, **text_generation_params).detach().cpu().numpy()
+                
         elif self.model_type == "tf":
             if self.inner_model.config.is_encoder_decoder:
                 inputs = self.get_inputs(X)
